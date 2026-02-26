@@ -1,0 +1,11 @@
+{
+  "team_size": 3,
+  "human_control_enabled": true,
+  "random_human_player": true,
+  "formation_name": "1-1-1",
+  "match_duration_seconds": 90,
+  "player_max_speed": 170,
+  "ball_friction": 0.985,
+  "tick_rate": 60,
+  "seed": 42
+}
