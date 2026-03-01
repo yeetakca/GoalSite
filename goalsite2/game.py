@@ -269,7 +269,10 @@ class Game:
                 team0_target_x = self.pitch.right if self.team0_attacks_right else self.pitch.left
                 team1_target_x = self.pitch.left if self.team0_attacks_right else self.pitch.right
                 goal_x = team0_target_x if active_player.team_id == 0 else team1_target_x
-                goal_y = self.pitch.centery
+                opponent_goal = self.right_goal if goal_x == self.pitch.right else self.left_goal
+                goal_top = opponent_goal.top + self.ball.radius
+                goal_bottom = opponent_goal.bottom - self.ball.radius
+                goal_y = self.random.uniform(goal_top, goal_bottom)
                 kicked = self._kick_ball_toward(active_player, pygame.Vector2(goal_x, goal_y), 520)
                 if kicked:
                     self._log_action_attempt(key, True, "shot", active_player, attack_mode, has_ball)

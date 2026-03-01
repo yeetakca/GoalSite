@@ -67,7 +67,7 @@ Stamina behavior:
 
 - `S`: short pass
 - `A`: long pass
-- `D`: shot
+- `D`: shot (aims at a random point on the opponent goal line)
 
 ### Defense Mode
 
