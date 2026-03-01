@@ -39,18 +39,22 @@ class Game:
         self.left_goal = pygame.Rect(self.pitch.left - 8, self.pitch.centery - 70, 8, 140)
         self.right_goal = pygame.Rect(self.pitch.right, self.pitch.centery - 70, 8, 140)
 
-        self.team_size = max(2, int(self.config.get("team_size", 6)))
+        self.team_size = max(2, int(self.config.get("team_size", 3)))
         self.player_max_speed = float(self.config.get("player_max_speed", 170.0))
         self.player_max_stamina = float(self.config.get("player_max_stamina", 100.0))
-        self.sprint_stamina_drain = float(self.config.get("sprint_stamina_drain", 34.0))
-        self.stamina_regen_rate = float(self.config.get("stamina_regen_rate", 20.0))
+        self.sprint_stamina_drain = float(self.config.get("sprint_stamina_drain", 40.0))
+        self.stamina_regen_rate = float(self.config.get("stamina_regen_rate", 15.0))
+        self.exhaustion_cooldown_seconds = float(self.config.get("exhaustion_cooldown_seconds", 0.45))
+        self.action_debug_logs = bool(self.config.get("logs_enabled", False))
+        self.post_kick_pickup_lockout_seconds = float(self.config.get("post_kick_pickup_lockout_seconds", 0.12))
         self.ball_friction = float(self.config.get("ball_friction", 0.985))
-        self.match_duration = int(self.config.get("match_duration_seconds", 180))
-        self.formation_name = str(self.config.get("formation_name", "2-2-1"))
+        self.match_duration = int(self.config.get("match_duration_seconds", 90))
+        self.formation_name = str(self.config.get("formation_name", "1-1-1"))
 
         self.teams = [TeamState(team_id=0), TeamState(team_id=1)]
         self.players: List[Player] = []
         self.ball = Ball(position=pygame.Vector2(self.pitch.centerx, self.pitch.centery))
+        self.ball_pickup_lockout = 0.0
 
         self.input_state = InputState()
         self.active_player_id: Optional[int] = None
@@ -85,6 +89,7 @@ class Game:
                         max_speed=self.player_max_speed,
                         max_stamina=self.player_max_stamina,
                         stamina=self.player_max_stamina,
+                        exhaustion_cooldown=0.0,
                     )
                 )
                 player_id += 1
@@ -161,24 +166,53 @@ class Game:
             return max(teammates, key=lambda player: player.position.distance_to(source.position))
         return min(teammates, key=lambda player: player.position.distance_to(source.position))
 
-    def _kick_ball_toward(self, source: Player, target: pygame.Vector2, power: float) -> None:
+    def _kick_ball_toward(self, source: Player, target: pygame.Vector2, power: float) -> bool:
         direction = target - source.position
         if direction.length_squared() == 0:
-            return
+            return False
         direction = direction.normalize()
 
         self.ball.possessor_id = None
         self.ball.position = source.position + direction * (source.radius + self.ball.radius + 2)
         self.ball.velocity = direction * power
+        self.ball_pickup_lockout = self.post_kick_pickup_lockout_seconds
         self._recompute_possession()
+        return True
+
+    def _log_action_attempt(
+        self,
+        key: int,
+        success: bool,
+        reason: str,
+        active_player: Optional[Player],
+        attack_mode: Optional[bool] = None,
+        has_ball: Optional[bool] = None,
+    ) -> None:
+        if not self.action_debug_logs:
+            return
+
+        player_id = "none" if active_player is None else str(active_player.player_id)
+        team_id = "none" if active_player is None else str(active_player.team_id)
+        stamina = "n/a" if active_player is None else f"{active_player.stamina:.1f}"
+        attack_label = "n/a" if attack_mode is None else str(attack_mode)
+        has_ball_label = "n/a" if has_ball is None else str(has_ball)
+        time_left = max(0, int(self.time_remaining))
+        print(
+            f"[ACTION] key={pygame.key.name(key)} success={success} reason={reason} "
+            f"player={player_id} team={team_id} attack={attack_label} has_ball={has_ball_label} "
+            f"stamina={stamina} t={time_left}s"
+        )
 
     def _attempt_action(self, key: int) -> None:
         now = pygame.time.get_ticks()
         if now - self.last_action_at < self.action_cooldown_ms:
+            remaining = self.action_cooldown_ms - (now - self.last_action_at)
+            self._log_action_attempt(key, False, f"cooldown:{max(0, remaining)}ms", self._active_player())
             return
 
         active_player = self._active_player()
         if active_player is None:
+            self._log_action_attempt(key, False, "no_active_player", None)
             return
 
         attack_mode = self._is_attack_mode()
@@ -188,16 +222,34 @@ class Game:
             if attack_mode and has_ball:
                 teammate = self._nearest_teammate(active_player)
                 if teammate is not None:
-                    self._kick_ball_toward(active_player, teammate.position, 260)
+                    kicked = self._kick_ball_toward(active_player, teammate.position, 260)
+                    if kicked:
+                        self._log_action_attempt(key, True, "short_pass", active_player, attack_mode, has_ball)
+                    else:
+                        self._log_action_attempt(key, False, "invalid_kick_direction", active_player, attack_mode, has_ball)
+                else:
+                    self._log_action_attempt(key, False, "no_teammate", active_player, attack_mode, has_ball)
                 self.last_action_at = now
+            else:
+                reason = "not_attack_mode" if not attack_mode else "no_ball"
+                self._log_action_attempt(key, False, reason, active_player, attack_mode, has_ball)
             return
 
         if key == pygame.K_a:
             if attack_mode and has_ball:
                 teammate = self._nearest_teammate(active_player, far=True)
                 if teammate is not None:
-                    self._kick_ball_toward(active_player, teammate.position, 420)
+                    kicked = self._kick_ball_toward(active_player, teammate.position, 420)
+                    if kicked:
+                        self._log_action_attempt(key, True, "long_pass", active_player, attack_mode, has_ball)
+                    else:
+                        self._log_action_attempt(key, False, "invalid_kick_direction", active_player, attack_mode, has_ball)
+                else:
+                    self._log_action_attempt(key, False, "no_teammate", active_player, attack_mode, has_ball)
                 self.last_action_at = now
+            else:
+                reason = "not_attack_mode" if not attack_mode else "no_ball"
+                self._log_action_attempt(key, False, reason, active_player, attack_mode, has_ball)
             return
 
         if key == pygame.K_w:
@@ -205,6 +257,11 @@ class Game:
                 if self.ball.position.distance_to(active_player.position) < 24:
                     self.ball.possessor_id = active_player.player_id
                     self.last_action_at = now
+                    self._log_action_attempt(key, True, "tackle_success", active_player, attack_mode, has_ball)
+                else:
+                    self._log_action_attempt(key, False, "too_far_from_ball", active_player, attack_mode, has_ball)
+            else:
+                self._log_action_attempt(key, False, "in_attack_mode", active_player, attack_mode, has_ball)
             return
 
         if key == pygame.K_d:
@@ -213,8 +270,18 @@ class Game:
                 team1_target_x = self.pitch.left if self.team0_attacks_right else self.pitch.right
                 goal_x = team0_target_x if active_player.team_id == 0 else team1_target_x
                 goal_y = self.pitch.centery
-                self._kick_ball_toward(active_player, pygame.Vector2(goal_x, goal_y), 520)
+                kicked = self._kick_ball_toward(active_player, pygame.Vector2(goal_x, goal_y), 520)
+                if kicked:
+                    self._log_action_attempt(key, True, "shot", active_player, attack_mode, has_ball)
+                else:
+                    self._log_action_attempt(key, False, "invalid_kick_direction", active_player, attack_mode, has_ball)
+            else:
+                reason = "not_attack_mode" if not attack_mode else "no_ball"
+                self._log_action_attempt(key, False, reason, active_player, attack_mode, has_ball)
             self.last_action_at = now
+            return
+
+        self._log_action_attempt(key, False, "unsupported_action_key", active_player, attack_mode, has_ball)
 
     def _handle_events(self) -> None:
         for event in pygame.event.get():
@@ -248,29 +315,46 @@ class Game:
                     self.input_state.sprint = False
 
     def _update_players(self, dt: float) -> None:
+        if self.ball_pickup_lockout > 0:
+            self.ball_pickup_lockout = max(0.0, self.ball_pickup_lockout - dt)
+
         active_player = self._active_player()
         active_vector = self._player_vector_from_input()
 
         for player in self.players:
             if active_player is not None and player.player_id == active_player.player_id:
                 moving = active_vector.length_squared() > 0
-                sprinting = self.input_state.sprint and moving and player.stamina > 0
+                if player.exhaustion_cooldown > 0:
+                    player.exhaustion_cooldown = max(0.0, player.exhaustion_cooldown - dt)
+
+                wants_sprint = self.input_state.sprint and moving
+                sprinting = wants_sprint and player.stamina > 0 and player.exhaustion_cooldown <= 0
                 speed = player.max_speed * (1.45 if sprinting else 1.0)
                 player.velocity = active_vector * speed
 
                 if sprinting:
                     player.stamina = max(0.0, player.stamina - self.sprint_stamina_drain * dt)
+                    if player.stamina <= 0:
+                        player.exhaustion_cooldown = self.exhaustion_cooldown_seconds
                 else:
-                    player.stamina = min(player.max_stamina, player.stamina + self.stamina_regen_rate * dt)
+                    if not self.input_state.sprint:
+                        player.stamina = min(player.max_stamina, player.stamina + self.stamina_regen_rate * dt)
+                    if wants_sprint and player.stamina <= 0 and player.exhaustion_cooldown <= 0:
+                        player.exhaustion_cooldown = self.exhaustion_cooldown_seconds
             else:
                 player.velocity = pygame.Vector2(0, 0)
                 player.stamina = min(player.max_stamina, player.stamina + self.stamina_regen_rate * dt)
+                player.exhaustion_cooldown = max(0.0, player.exhaustion_cooldown - dt)
 
             player.position += player.velocity * dt
             player.position.x = max(self.pitch.left + 4, min(self.pitch.right - 4, player.position.x))
             player.position.y = max(self.pitch.top + 4, min(self.pitch.bottom - 4, player.position.y))
 
-            if self.ball.possessor_id is None and player.position.distance_to(self.ball.position) < player.radius + self.ball.radius + 2:
+            if (
+                self.ball_pickup_lockout <= 0
+                and self.ball.possessor_id is None
+                and player.position.distance_to(self.ball.position) < player.radius + self.ball.radius + 2
+            ):
                 self.ball.possessor_id = player.player_id
 
     def _update_ball(self, dt: float) -> None:
@@ -331,14 +415,14 @@ class Game:
 
         for player in self.players:
             mirrored_home_x = self.pitch.left + self.pitch.right - player.home_position.x
-            mirrored_pos_x = self.pitch.left + self.pitch.right - player.position.x
             player.home_position = pygame.Vector2(mirrored_home_x, player.home_position.y)
-            player.position = pygame.Vector2(mirrored_pos_x, player.position.y)
+            player.position = player.home_position.copy()
             player.velocity = pygame.Vector2(0, 0)
 
         self.ball.position = pygame.Vector2(self.pitch.centerx, self.pitch.centery)
         self.ball.velocity = pygame.Vector2(0, 0)
         self.ball.possessor_id = None
+        self.ball_pickup_lockout = 0.0
         self._recompute_possession()
 
     def _reset_after_goal(self) -> None:
@@ -347,9 +431,11 @@ class Game:
             player.velocity = pygame.Vector2(0, 0)
             player.has_ball = False
             player.stamina = player.max_stamina
+            player.exhaustion_cooldown = 0.0
         self.ball.position = pygame.Vector2(self.pitch.centerx, self.pitch.centery)
         self.ball.velocity = pygame.Vector2(0, 0)
         self.ball.possessor_id = None
+        self.ball_pickup_lockout = 0.0
 
     def _draw(self) -> None:
         self.screen.fill((18, 95, 40))

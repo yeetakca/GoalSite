@@ -19,6 +19,7 @@ class Player:
     has_ball: bool = False
     max_stamina: float = 100.0
     stamina: float = 100.0
+    exhaustion_cooldown: float = 0.0
 
 
 @dataclass

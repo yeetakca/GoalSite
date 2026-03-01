@@ -18,6 +18,7 @@ The project has two purposes:
 - If human control is enabled in config, assign control to **one random player**.
 - Team/player count must be configurable.
 - Teams must **switch sides at halftime**.
+- At halftime, second half restarts from reset formation locations on swapped sides.
 
 ## 3) Configuration
 
@@ -37,6 +38,10 @@ Nice-to-have fields (post-MVP):
 - `player_max_stamina`
 - `sprint_stamina_drain`
 - `stamina_regen_rate`
+- `exhaustion_cooldown_seconds`
+- `post_kick_pickup_lockout_seconds`
+- `logs_enabled`
+- `action_debug_logs`
 - `ball_friction`
 - `tick_rate`
 - `seed`
@@ -54,7 +59,8 @@ Nice-to-have fields (post-MVP):
 Stamina behavior:
 
 - Sprinting consumes stamina.
-- Stamina regenerates over time when not sprinting.
+- Stamina regenerates over time only when sprint input is not held.
+- Reaching zero stamina triggers a short sprint lockout (`exhaustion_cooldown_seconds`) to prevent micro-burst sprint jitter.
 - Each player has a visible stamina bar.
 
 ### Attack Mode

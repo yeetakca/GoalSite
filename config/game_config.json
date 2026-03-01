@@ -4,7 +4,13 @@
   "random_human_player": true,
   "formation_name": "1-1-1",
   "match_duration_seconds": 90,
+  "action_debug_logs": true,
   "player_max_speed": 170,
+  "player_max_stamina": 100,
+  "sprint_stamina_drain": 40,
+  "stamina_regen_rate": 15,
+  "exhaustion_cooldown_seconds": 0.45,
+  "post_kick_pickup_lockout_seconds": 0.12,
   "ball_friction": 0.985,
   "tick_rate": 60,
   "seed": 42
